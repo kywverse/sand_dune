@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="MediaPipe 손 인식과 카메라 움직임 감지를 활용해 입자 크기에 따른 사구 형성 과정을 비교하는 지구과학 수업용 웹앱"
+    />
+    <meta name="theme-color" content="#15364a" />
+    <title>손으로 만드는 사구 실험실</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css?v=2.1.0" />
+    <script>
+      (() => {
+        const showError = (message) => {
+          const banner = document.getElementById("fatalBanner");
+          if (!banner) return;
+          banner.hidden = false;
+          const target = banner.querySelector("[data-fatal-message]");
+          if (target) target.textContent = message;
+        };
+        window.addEventListener("error", (event) => {
+          showError(`화면 실행 오류: ${event.message || "알 수 없는 오류"}`);
+        });
+        window.addEventListener("unhandledrejection", (event) => {
+          const reason = event.reason?.message || String(event.reason || "알 수 없는 오류");
+          showError(`기능 실행 오류: ${reason}`);
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#mainContent">본문으로 바로 가기</a>
+
+    <div id="fatalBanner" class="fatal-banner" role="alert" hidden>
+      <strong>웹앱 일부 기능을 시작하지 못했습니다.</strong>
+      <span data-fatal-message>브라우저를 새로고침해 주세요.</span>
+      <button type="button" onclick="location.reload()">새로고침</button>
+    </div>
+
+    <header class="site-header">
+      <div>
+        <div class="title-kicker">
+          <span>지구과학 · 바람에 의한 퇴적 지형</span>
+          <span class="version-badge">안정화 버전 2.1</span>
+        </div>
+        <h1>손으로 만드는 사구 실험실</h1>
+        <p>
+          손을 움직여 바람을 만들고, 같은 바람에서 <strong>아주 작은 입자·모래·큰 입자</strong>가
+          어떻게 다르게 이동하고 쌓이는지 비교해 보세요.
+        </p>
+      </div>
+      <button id="fullscreenButton" class="button button-secondary header-action" type="button">
+        전체 화면
+      </button>
+    </header>
+
+    <section class="system-strip" aria-label="실시간 실험 상태">
+      <div class="system-item">
+        <span>카메라</span>
+        <strong id="cameraLiveValue">꺼짐</strong>
+      </div>
+      <div class="system-item system-item-wide">
+        <span>손 인식 방식</span>
+        <strong id="engineLiveValue">카메라 시작 전</strong>
+      </div>
+      <div class="system-item">
+        <span>풍향</span>
+        <strong id="windDirectionValue">멈춤</strong>
+      </div>
+      <div class="system-item system-item-gauge">
+        <span>상대 바람 세기</span>
+        <div class="gauge" aria-hidden="true"><i id="windGaugeFill"></i></div>
+        <strong id="windStrengthValue">0.0 / 10</strong>
+      </div>
+      <div class="system-item system-item-wide">
+        <span>현재 입자 움직임</span>
+        <strong id="movementValue">바람이 약해 거의 움직이지 않음</strong>
+      </div>
+      <div class="system-item">
+        <span>사구 형성</span>
+        <strong id="formationValue">낮음</strong>
+      </div>
+    </section>
+
+    <main id="mainContent" class="workspace">
+      <aside class="panel controls-panel" aria-labelledby="controlsHeading">
+        <div class="panel-heading">
+          <span class="step-number">1</span>
+          <div>
+            <h2 id="controlsHeading">바람 만들기</h2>
+            <p>손 인식 또는 수동 조작을 선택합니다.</p>
+          </div>
+        </div>
+
+        <div class="segmented-control" role="group" aria-label="바람 조작 방법">
+          <button class="segment is-active" data-control="hand" type="button" aria-pressed="true">
+            손으로 바람
+          </button>
+          <button class="segment" data-control="manual" type="button" aria-pressed="false">
+            수동 조작
+          </button>
+        </div>
+
+        <section id="cameraPanel" class="control-section" aria-label="카메라 손 인식">
+          <div class="camera-frame">
+            <video id="cameraVideo" autoplay muted playsinline aria-label="카메라 영상"></video>
+            <canvas id="cameraOverlay" aria-hidden="true"></canvas>
+            <span id="handDetectionBadge" class="camera-badge" data-state="neutral">카메라 꺼짐</span>
+            <span id="engineBadge" class="engine-badge" data-state="neutral">인식 준비 전</span>
+            <p class="privacy-note">영상은 저장·전송하지 않습니다.</p>
+          </div>
+
+          <div class="button-row camera-actions">
+            <button id="cameraStartButton" class="button button-primary" type="button">카메라 시작</button>
+            <button id="cameraStopButton" class="button button-secondary" type="button" hidden>카메라 끄기</button>
+            <button id="retryMediaPipeButton" class="button button-ghost" type="button" hidden>
+              MediaPipe 다시 연결
+            </button>
+          </div>
+
+          <p id="cameraStatus" class="status-message" data-state="neutral" aria-live="polite">
+            카메라가 꺼져 있습니다.
+          </p>
+          <p id="engineStatus" class="status-message status-secondary" data-state="neutral" aria-live="polite">
+            카메라를 시작하면 MediaPipe 손 인식을 준비합니다.
+          </p>
+
+          <div class="instruction-card">
+            <strong>손동작 방법</strong>
+            <ol>
+              <li>상체와 손바닥 전체가 보이도록 카메라에서 조금 떨어집니다.</li>
+              <li>바람을 보내려는 방향으로 손을 빠르게 밉니다.</li>
+              <li>손은 천천히 원래 위치로 되돌립니다.</li>
+            </ol>
+            <p>
+              MediaPipe 연결이 막혀도 <strong>카메라 움직임 감지</strong>로 자동 전환되어 수업을 계속할 수 있습니다.
+            </p>
+          </div>
+
+          <details class="troubleshooting-card">
+            <summary>카메라가 켜지지 않을 때</summary>
+            <ol>
+              <li>주소가 <code>https://사용자명.github.io/...</code>인지 확인합니다.</li>
+              <li>주소창 왼쪽의 카메라 아이콘에서 권한을 ‘허용’으로 바꿉니다.</li>
+              <li>Zoom·Meet·카메라 앱을 닫은 뒤 새로고침합니다.</li>
+              <li>그래도 안 되면 ‘수동 조작’을 사용합니다.</li>
+            </ol>
+          </details>
+        </section>
+
+        <section id="manualPanel" class="control-section" hidden>
+          <label class="range-label" for="manualWindSlider">
+            <span>상대 바람 세기</span>
+            <strong id="manualWindValue">6.0 / 10</strong>
+          </label>
+          <input id="manualWindSlider" type="range" min="0" max="10" step="0.1" value="6" />
+          <div class="direction-grid" role="group" aria-label="바람 방향">
+            <button class="direction-button" data-direction="-1" type="button" aria-pressed="false">
+              ← 왼쪽
+            </button>
+            <button class="direction-button is-active" data-direction="0" type="button" aria-pressed="true">
+              멈춤
+            </button>
+            <button class="direction-button" data-direction="1" type="button" aria-pressed="false">
+              오른쪽 →
+            </button>
+          </div>
+          <p class="helper-text">키보드의 ←, →, 0 키로도 조작할 수 있습니다.</p>
+        </section>
+
+        <hr class="panel-divider" />
+
+        <div class="panel-heading panel-heading-small">
+          <span class="step-number">2</span>
+          <div>
+            <h2>입자 크기 선택</h2>
+            <p>‘한 종류 자세히’ 모드에 적용됩니다.</p>
+          </div>
+        </div>
+
+        <label class="range-label" for="grainSlider">
+          <span>현재 입자 크기</span>
+          <strong id="grainSizeValue">0.25 mm</strong>
+        </label>
+        <input id="grainSlider" type="range" min="0" max="100" step="0.1" value="56.6" />
+        <div class="range-scale" aria-hidden="true">
+          <span>아주 작음</span><span>모래</span><span>큼</span>
+        </div>
+        <p id="grainClassValue" class="grain-class">고운 모래~중간 크기 모래</p>
+
+        <div class="preset-grid" aria-label="입자 크기 빠른 선택">
+          <button class="preset-button" data-grain-size="0.02" type="button">
+            <span>아주 작은 입자</span><small>0.02 mm</small>
+          </button>
+          <button class="preset-button is-active" data-grain-size="0.25" type="button">
+            <span>모래</span><small>0.25 mm</small>
+          </button>
+          <button class="preset-button" data-grain-size="3" type="button">
+            <span>큰 입자</span><small>3.0 mm</small>
+          </button>
+        </div>
+      </aside>
+
+      <section class="panel simulation-panel" aria-labelledby="simulationHeading">
+        <div class="simulation-header">
+          <div class="panel-heading panel-heading-inline">
+            <span class="step-number">3</span>
+            <div>
+              <h2 id="simulationHeading">사구 형성 관찰</h2>
+              <p>같은 바람에서 입자 크기만 바꾸어 비교합니다.</p>
+            </div>
+          </div>
+          <div class="segmented-control mode-control" role="group" aria-label="관찰 모드">
+            <button class="segment is-active" data-mode="compare" type="button" aria-pressed="true">
+              세 종류 비교
+            </button>
+            <button class="segment" data-mode="detail" type="button" aria-pressed="false">
+              한 종류 자세히
+            </button>
+          </div>
+        </div>
+
+        <section id="compareSection" aria-label="세 입자 크기 비교">
+          <div class="compare-grid">
+            <article class="compare-card" data-grain-card="fine">
+              <div class="compare-card-header">
+                <div><h3>아주 작은 입자</h3><p>실트 크기 · 0.02 mm</p></div>
+                <span class="formation-badge" data-stat="formation">사구 형성 낮음</span>
+              </div>
+              <div id="compareStage-fine" class="canvas-stage compare-stage">
+                <canvas id="compareCanvas-fine" aria-label="아주 작은 입자의 이동과 퇴적 모형"></canvas>
+              </div>
+              <dl class="mini-stats">
+                <div><dt>현재 움직임</dt><dd data-stat="movement">표면에 남음</dd></div>
+                <div><dt>사구 성장</dt><dd data-stat="height">0</dd></div>
+                <div><dt>구역 밖 이동</dt><dd data-stat="loss">0</dd></div>
+              </dl>
+            </article>
+
+            <article class="compare-card featured-card" data-grain-card="sand">
+              <div class="compare-card-header">
+                <div><h3>사구를 잘 이루는 모래</h3><p>고운~중간 모래 · 0.25 mm</p></div>
+                <span class="formation-badge" data-stat="formation">사구 형성 낮음</span>
+              </div>
+              <div id="compareStage-sand" class="canvas-stage compare-stage">
+                <canvas id="compareCanvas-sand" aria-label="모래의 이동과 사구 형성 모형"></canvas>
+              </div>
+              <dl class="mini-stats">
+                <div><dt>현재 움직임</dt><dd data-stat="movement">거의 움직이지 않음</dd></div>
+                <div><dt>사구 성장</dt><dd data-stat="height">0</dd></div>
+                <div><dt>구역 밖 이동</dt><dd data-stat="loss">0</dd></div>
+              </dl>
+            </article>
+
+            <article class="compare-card" data-grain-card="coarse">
+              <div class="compare-card-header">
+                <div><h3>큰 입자</h3><p>잔자갈 크기 · 3.0 mm</p></div>
+                <span class="formation-badge" data-stat="formation">사구 형성 낮음</span>
+              </div>
+              <div id="compareStage-coarse" class="canvas-stage compare-stage">
+                <canvas id="compareCanvas-coarse" aria-label="큰 입자의 이동과 퇴적 모형"></canvas>
+              </div>
+              <dl class="mini-stats">
+                <div><dt>현재 움직임</dt><dd data-stat="movement">거의 움직이지 않음</dd></div>
+                <div><dt>사구 성장</dt><dd data-stat="height">0</dd></div>
+                <div><dt>구역 밖 이동</dt><dd data-stat="loss">0</dd></div>
+              </dl>
+            </article>
+          </div>
+        </section>
+
+        <section id="detailSection" aria-label="선택한 입자 자세히 관찰" hidden>
+          <div id="detailCanvasStage" class="canvas-stage detail-stage">
+            <canvas id="detailCanvas" aria-label="선택한 입자의 사구 형성 상세 모형"></canvas>
+          </div>
+          <dl id="detailStats" class="detail-stats">
+            <div><dt>현재 움직임</dt><dd data-detail-stat="movement">거의 움직이지 않음</dd></div>
+            <div><dt>사구 성장 지수</dt><dd data-detail-stat="height">0 / 100</dd></div>
+            <div><dt>사구 이동 지수</dt><dd data-detail-stat="migration">0.0</dd></div>
+            <div><dt>구역 밖 이동</dt><dd data-detail-stat="loss">0</dd></div>
+          </dl>
+        </section>
+
+        <div class="simulation-actions">
+          <button id="pauseButton" class="button button-secondary" type="button" aria-pressed="false">
+            일시 정지
+          </button>
+          <button id="resetButton" class="button button-secondary" type="button">처음부터</button>
+          <button id="observationButton" class="button button-primary" type="button">관찰 결과 기록</button>
+        </div>
+      </section>
+
+      <aside class="panel learning-panel" aria-labelledby="learningHeading">
+        <div class="panel-heading">
+          <span class="step-number">4</span>
+          <div>
+            <h2 id="learningHeading">과학적으로 해석하기</h2>
+            <p>현재 조건을 입자 크기와 바람의 관계로 설명합니다.</p>
+          </div>
+        </div>
+
+        <article class="science-card live-science-card">
+          <p class="card-label">현재 선택 입자</p>
+          <h3 id="grainLiveTitle">고운 모래~중간 크기 모래 · 0.25 mm</h3>
+          <div class="movement-callout">
+            <strong id="movementLiveTitle">바람이 약해 거의 움직이지 않음</strong>
+            <p id="movementLiveDescription">이 크기의 입자를 움직이려면 현재보다 강한 바람이 필요합니다.</p>
+          </div>
+          <p id="conclusionLive" class="conclusion-live">
+            바람이 이동 시작 기준보다 약해 사구가 거의 성장하지 않습니다.
+          </p>
+          <div class="formation-meter-label">
+            <span>사구 형성 조건 지수</span><strong id="formationMeterText">0 / 100</strong>
+          </div>
+          <div class="formation-meter" aria-hidden="true"><i id="formationMeterFill"></i></div>
+          <p class="threshold-line">현재 입자의 이동 시작 기준: <strong id="thresholdValue">2.6 / 10</strong></p>
+        </article>
+
+        <article class="science-card">
+          <div class="card-title-row">
+            <h3>입자 크기와 이동 시작 조건</h3>
+            <span class="concept-badge">개념 그래프</span>
+          </div>
+          <p class="card-description">
+            아주 작은 입자는 입자 사이의 응집력 때문에, 큰 입자는 무게 때문에 이동을 시작하려면 더 강한 바람이 필요합니다.
+          </p>
+          <div class="threshold-chart-wrap">
+            <canvas id="thresholdCanvas" aria-label="입자 크기에 따른 이동 시작 바람 세기 개념 그래프"></canvas>
+          </div>
+        </article>
+
+        <details class="question-card" open>
+          <summary>탐구 질문</summary>
+          <ol>
+            <li>같은 바람에서 어느 크기의 입자가 가장 잘 쌓이는가?</li>
+            <li>아주 작은 입자는 약한 바람과 강한 바람에서 어떻게 달라지는가?</li>
+            <li>큰 입자가 사구를 이루기 어려운 직접적인 이유는 무엇인가?</li>
+            <li>“입자가 작을수록 무조건 잘 날린다”는 설명은 왜 충분하지 않은가?</li>
+          </ol>
+        </details>
+
+        <details class="question-card">
+          <summary>이 모형의 한계</summary>
+          <p>
+            이 웹앱은 입자 크기와 바람의 관계를 비교하는 <strong>규칙 기반 개념 모형</strong>입니다. 실제 사구에는
+            수분, 식생, 모래 공급량, 바람의 지속 시간과 방향 변화, 지표 굴곡도 함께 작용합니다.
+          </p>
+        </details>
+      </aside>
+    </main>
+
+    <section class="panel records-panel" aria-labelledby="recordsHeading">
+      <div class="records-header">
+        <div>
+          <p class="section-kicker">수업 기록</p>
+          <h2 id="recordsHeading">관찰 결과표</h2>
+          <p>현재 조건을 기록하고 CSV 파일로 저장할 수 있습니다. 기록은 이 브라우저에만 남습니다.</p>
+        </div>
+        <div class="button-row">
+          <button id="exportCsvButton" class="button button-secondary" type="button" disabled>CSV 저장</button>
+          <button id="clearObservationsButton" class="button button-ghost" type="button" disabled>기록 지우기</button>
+        </div>
+      </div>
+      <p id="observationEmpty" class="empty-state">아직 기록이 없습니다. 실험 후 ‘관찰 결과 기록’을 누르세요.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>시각</th><th>입자</th><th>크기</th><th>바람</th><th>입자 움직임</th><th>사구 형성</th><th>성장 지수</th>
+            </tr>
+          </thead>
+          <tbody id="observationBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      <p>교육용 개념 모형 · 카메라 영상과 손 좌표는 브라우저 안에서만 처리됩니다.</p>
+      <p id="appVersion">버전 2.1.0</p>
+    </footer>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <noscript>이 웹앱을 사용하려면 브라우저에서 JavaScript를 허용해야 합니다.</noscript>
+    <script type="module" src="./js/app.js?v=2.1.0"></script>
+  </body>
+</html>

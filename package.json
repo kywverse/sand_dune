@@ -1,0 +1,11 @@
+{
+  "name": "sand-dune-hand-lab",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MediaPipe와 카메라 움직임 감지를 활용한 반응형 사구 형성 개념 모형",
+  "scripts": {
+    "test": "node tests/run-tests.mjs",
+    "check": "node --check js/app.js && node --check js/camera-controller.js && node --check js/dune-simulation.js && node --check js/science-model.js && node --check js/motion-analyzer.js"
+  }
+}
